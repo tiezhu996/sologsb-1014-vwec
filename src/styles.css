@@ -201,6 +201,55 @@ kbd { padding: 2px 5px; border: 1px solid #c8d1da; border-bottom-width: 2px; bor
 .diff-label { color: #657385; background: #fafbfc; }
 .toast-notification { position: fixed; right: 24px; bottom: 24px; z-index: 80; padding: 11px 16px; border-radius: 9px; color: #fff; background: #173f60; box-shadow: 0 10px 30px rgba(17,47,70,.25); font-size: 12px; }
 
+/* 公共引理册 */
+.lemma-chip {
+  padding: 2px 7px; border-radius: 5px; font-size: 10px; white-space: nowrap;
+}
+.lemma-chip.is-active { color: #1f6b50; background: #e4f6ee; }
+.lemma-chip.is-stale { color: #9a6410; background: #fff2cf; }
+.lemma-chip.is-revoked { color: #a52f3c; background: #ffe6e9; text-decoration: line-through; }
+.lemma-chip.is-missing { color: #a52f3c; background: #ffe6e9; }
+.lemma-pick-name { color: #33475c; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reference-item small.is-revoked-text { color: #a52f3c; }
+.reference-item small.is-stale-text { color: #9a6410; }
+.registered-lemma-hint {
+  margin-top: 10px; padding: 7px 8px; border-radius: 8px; background: #f0f8f4;
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+}
+.registered-lemma-hint .lemma-chip { align-self: flex-start; }
+.lemma-register-btn { color: var(--blue); font-size: 10px; cursor: pointer; text-decoration: underline; }
+.register-lemma { margin-top: 10px !important; }
+
+.lemma-list { padding: 8px; display: grid; gap: 8px; max-height: 420px; overflow-y: auto; }
+.lemma-card {
+  border: 1px solid #e2e8ef; border-left-width: 3px; border-radius: 10px;
+  padding: 9px 10px; display: grid; gap: 6px; background: #fbfcfe;
+}
+.lemma-card.is-active { border-left-color: #35a57b; }
+.lemma-card.is-stale { border-left-color: #d99a26; background: #fffbef; }
+.lemma-card.is-revoked { border-left-color: #c93d4c; background: #fdf3f4; opacity: .82; }
+.lemma-card-head { display: flex; align-items: center; gap: 6px; }
+.lemma-name-input {
+  flex: 1; min-width: 0; border: 0; border-bottom: 1px solid transparent; outline: 0;
+  font-weight: 700; font-size: 12px; color: var(--ink); background: transparent; padding: 1px 2px;
+}
+.lemma-name-input:focus { border-bottom-color: #82a9c6; }
+.lemma-status-tag {
+  padding: 2px 7px; border-radius: 99px; font-size: 10px; white-space: nowrap;
+  color: #1f6b50; background: #e4f6ee;
+}
+.lemma-status-tag.is-stale { color: #8a5a10; background: #fdecc6; }
+.lemma-status-tag.is-revoked { color: #9a3040; background: #fbdce0; }
+.lemma-statement { font: 13px/1.5 "Times New Roman", "Noto Serif SC", serif; overflow-x: auto; }
+.lemma-card.is-revoked .lemma-statement { text-decoration: line-through; text-decoration-color: rgba(160,60,75,.55); }
+.lemma-source { color: var(--muted); font-size: 10px; }
+.lemma-drift { font-size: 10px; color: #8a5a10; background: #fff7e0; border-radius: 6px; padding: 5px 7px; overflow-x: auto; }
+.lemma-drift .lemma-drift-now { font-family: "Times New Roman", "Noto Serif SC", serif; }
+.lemma-basis summary { cursor: pointer; color: var(--blue); font-size: 10px; user-select: none; }
+.lemma-basis .reference-list { margin-top: 6px; max-height: 120px; }
+.lemma-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.lemma-actions .button { font-size: 10px; height: 26px; padding: 0 10px; }
+
 @media (max-width: 1220px) {
   .workspace { grid-template-columns: 210px minmax(470px, 1fr); }
   .right-rail { grid-column: 1 / -1; position: static; grid-template-columns: repeat(3, 1fr); }

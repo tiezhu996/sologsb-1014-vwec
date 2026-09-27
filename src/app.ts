@@ -1,7 +1,7 @@
 import m, { type Component } from 'mithril';
 import katex from 'katex';
-import { compareVersion, ProofStore, RULES } from './store';
-import type { ProofDocument, ProofStep } from './types';
+import { compareVersion, findLemmaSource, lemmaStatus, ProofStore, RULES, usedLemmaOrder } from './store';
+import type { Lemma, LemmaStatus, ProofDocument, ProofStep } from './types';
 
 const store = new ProofStore();
 
@@ -53,15 +53,29 @@ function download(name: string, content: string, mime: string): void {
   URL.revokeObjectURL(link.href);
 }
 
-function exportMarkdown(document: ProofDocument): string {
+function lemmaStatusLabel(status: LemmaStatus): string {
+  if (status.state === 'revoked') return '已撤销';
+  if (status.state === 'stale') return `已失效（${status.detail}）`;
+  return '有效';
+}
+
+function lemmaSourceLabel(lemma: Lemma, documents: ProofDocument[]): string {
+  const source = findLemmaSource(lemma, documents);
+  return source ? `${source.document.title} · 步骤 ${source.index + 1}` : '来源步骤已移除';
+}
+
+export function exportMarkdown(store: ProofStore, document: ProofDocument): string {
   const lines = [`# ${document.title}`, '', `**证明目标：** $${document.goal}$`, ''];
+  const lemmaRefs = (step: ProofStep): string[] => step.lemmas.map((id) => store.lemmaById(id)?.name ?? `缺失引理 ${id}`);
   document.steps.forEach((step, index) => {
     const refs = step.references.map((id) => `步骤 ${document.steps.findIndex((item) => item.id === id) + 1}`).filter((ref) => ref !== '步骤 0');
+    const lemmaBasis = lemmaRefs(step);
     lines.push(`## ${index + 1}. ${step.statement}`);
     lines.push('');
     lines.push(`- 类型：${typeLabel[step.type]}`);
     lines.push(`- 推理规则：${step.rule}`);
     if (refs.length) lines.push(`- 依据：${refs.join('、')}`);
+    if (lemmaBasis.length) lines.push(`- 引理依据：${lemmaBasis.join('、')}`);
     if (step.note) lines.push(`- 旁注：${step.note}`);
     if (step.counterexample) lines.push(`- 反例：${step.counterexample}`);
     if (step.alternative) lines.push(`- 替代分支：${step.alternative}`);
@@ -69,18 +83,57 @@ function exportMarkdown(document: ProofDocument): string {
   });
   lines.push('## 符号表');
   Object.entries(document.symbols).forEach(([symbol, meaning]) => lines.push(`- $${symbol}$：${meaning}`));
+  lines.push('');
+
+  const used = usedLemmaOrder(document, store.lemmas);
+  if (used.length) {
+    lines.push('## 引理清单');
+    lines.push('');
+    lines.push('> 仅列本稿用到的引理（含传递依赖），被依赖的排在前面。');
+    lines.push('');
+    used.forEach((lemma, index) => {
+      const status = lemmaStatus(lemma, store.documents);
+      const basis = lemma.basisLemmaIds
+        .map((id) => used.findIndex((item) => item.id === id) + 1)
+        .filter(Boolean)
+        .map((order) => `引理 ${order}`);
+      lines.push(`### 引理 ${index + 1}. ${lemma.name}`);
+      lines.push('');
+      lines.push(`- 命题：${lemma.statement}`);
+      lines.push(`- 状态：${lemmaStatusLabel(status)}`);
+      lines.push(`- 来源：${lemmaSourceLabel(lemma, store.documents)}`);
+      if (basis.length) lines.push(`- 依据：${basis.join('、')}`);
+      lines.push('');
+    });
+  }
   return lines.join('\n');
 }
 
-function exportLatex(document: ProofDocument): string {
+export function exportLatex(store: ProofStore, document: ProofDocument): string {
   const lines = ['\\documentclass{article}', '\\usepackage{amsmath,amssymb}', '\\begin{document}', `\\section*{${document.title}}`, `\\textbf{证明目标：} $${document.goal}$`, '\\begin{enumerate}'];
   document.steps.forEach((step) => {
     const refs = step.references.map((id) => document.steps.findIndex((item) => item.id === id) + 1).filter(Boolean);
-    const support = refs.length ? `（依据 ${refs.join(', ')}；${step.rule}）` : `（${step.rule}）`;
-    lines.push(`  \\item ${step.statement} ${support}`);
+    const lemmaBasis = step.lemmas.map((id) => store.lemmaById(id)?.name ?? `缺失引理 ${id}`);
+    const supportParts: string[] = [];
+    if (refs.length) supportParts.push(`依据 ${refs.join(', ')}`);
+    if (lemmaBasis.length) supportParts.push(`引理：${lemmaBasis.join('、')}`);
+    supportParts.push(step.rule);
+    lines.push(`  \\item ${step.statement} （${supportParts.join('；')}）`);
     if (step.note) lines.push(`  \\par\\small 旁注：${step.note}`);
   });
-  lines.push('\\end{enumerate}', '\\end{document}');
+  lines.push('\\end{enumerate}');
+
+  const used = usedLemmaOrder(document, store.lemmas);
+  if (used.length) {
+    lines.push('\\section*{引理清单}');
+    lines.push('\\begin{enumerate}');
+    used.forEach((lemma) => {
+      const status = lemmaStatus(lemma, store.documents);
+      lines.push(`  \\item \\textbf{${lemma.name}}：${lemma.statement}（${lemmaStatusLabel(status)}；来源：${lemmaSourceLabel(lemma, store.documents)}）`);
+    });
+    lines.push('\\end{enumerate}');
+  }
+  lines.push('\\end{document}');
   return lines.join('\n');
 }
 
@@ -209,8 +262,8 @@ export class ProofApp implements Component {
               m('div.editor-meta', [`${document.author} · ${document.steps.length} 个步骤`, m('span.keyboard-hint', '拖动 ⠿ 排序')]),
             ]),
             m('div.export-actions', [
-              m('button.button.is-small', { onclick: () => download(`${document.title}.md`, exportMarkdown(document), 'text/markdown;charset=utf-8') }, '导出 Markdown'),
-              m('button.button.is-small', { onclick: () => download(`${document.title}.tex`, exportLatex(document), 'application/x-tex;charset=utf-8') }, '导出 LaTeX'),
+              m('button.button.is-small', { onclick: () => download(`${document.title}.md`, exportMarkdown(store, document), 'text/markdown;charset=utf-8') }, '导出 Markdown'),
+              m('button.button.is-small', { onclick: () => download(`${document.title}.tex`, exportLatex(store, document), 'application/x-tex;charset=utf-8') }, '导出 LaTeX'),
             ]),
           ]),
           m('section.goal-card', [
@@ -260,6 +313,12 @@ export class ProofApp implements Component {
                     const referenceIndex = document.steps.findIndex((item) => item.id === reference);
                     return referenceIndex >= 0 ? `步骤 ${referenceIndex + 1}` : `缺失 ${shortId(reference)}`;
                   }).join('、')}` : '独立前提'),
+                  ...step.lemmas.map((lemmaId) => {
+                    const lemma = store.lemmaById(lemmaId);
+                    const status = lemma ? lemmaStatus(lemma, store.documents) : undefined;
+                    return m('span.lemma-chip', { class: !lemma ? 'is-missing' : status?.state === 'revoked' ? 'is-revoked' : status?.state === 'stale' ? 'is-stale' : 'is-active' },
+                      lemma ? `引理·${lemma.name}${status?.state === 'revoked' ? '（已撤销）' : status?.state === 'stale' ? '（已失效）' : ''}` : `引理 ${shortId(lemmaId)}（已删除）`);
+                  }),
                   step.note && m('span.has-note', '含旁注'),
                   step.counterexample && m('span.has-counterexample', '含反例'),
                   step.alternative && m('span.has-branch', '含替代分支'),
@@ -314,6 +373,37 @@ export class ProofApp implements Component {
               m('span', `步骤 ${document.steps.indexOf(step) + 1}`),
               m('small', step.statement.replace(/\$/g, '')),
             ]))),
+            m('label.field-label', '引理依据（公共引理册）'),
+            m('div.reference-list', store.lemmas.length === 0 && m('p.empty-copy', '引理册还是空的，先在下方把某一步登记为引理。'), store.lemmas.map((lemma) => {
+              const status = lemmaStatus(lemma, store.documents);
+              return m('label.reference-item', [
+                m('input', {
+                  type: 'checkbox',
+                  checked: selected.lemmas.includes(lemma.id),
+                  onchange: (event: Event) => store.toggleStepLemma(selected.id, lemma.id, (event.target as HTMLInputElement).checked),
+                }),
+                m('span.lemma-pick-name', lemma.name),
+                m('small', { class: status.state === 'revoked' ? 'is-revoked-text' : status.state === 'stale' ? 'is-stale-text' : '' },
+                  status.state === 'revoked' ? '已撤销' : status.state === 'stale' ? `已失效·${status.reason === 'missing' ? '来源缺失' : '命题变样'}` : lemma.statement.replace(/\$/g, '')),
+              ]);
+            })),
+            (() => {
+              const registered = store.lemmas.find((lemma) => lemma.sourceDocId === document.id && lemma.sourceStepId === selected.id);
+              return registered
+                ? m('div.registered-lemma-hint', [
+                    m('span.lemma-chip.is-active', `本步已登记为引理：${registered.name}`),
+                    m('span.lemma-register-btn', { onclick: () => { globalThis.document.querySelector(`[data-lemma="${registered.id}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }, '在引理册中查看 ↑'),
+                  ])
+                : m('button.button.is-small.is-white.is-fullwidth', {
+                    class: 'register-lemma',
+                    onclick: () => {
+                      const name = window.prompt('为这条引理起个名字', selected.statement.replace(/\$/g, '').slice(0, 20) || `引理 ${store.lemmas.length + 1}`);
+                      if (name === null) return;
+                      store.registerLemma(selected.id, name);
+                      m.redraw();
+                    },
+                  }, '＋ 把当前步骤登记为引理');
+            })(),
             m('div.field-grid', [
               m('div', [m('label.field-label', '旁注'), m('textarea.textarea.is-small', { rows: 2, value: selected.note, placeholder: '记录思路或条件', oninput: (event: Event) => store.updateStep({ note: (event.target as HTMLTextAreaElement).value }) })]),
               m('div', [m('label.field-label', '反例 / 边界情况'), m('textarea.textarea.is-small', { rows: 2, value: selected.counterexample, placeholder: '尝试寻找反例', oninput: (event: Event) => store.updateStep({ counterexample: (event.target as HTMLTextAreaElement).value }) })]),
@@ -329,6 +419,53 @@ export class ProofApp implements Component {
               },
             }, '＋ 登记新符号'),
           ]) : m('section.panel.inspector', m('p.empty-copy', '选择一个步骤进行检查。')),
+          m('section.panel.lemma-book', [
+            m('div.panel-heading', [m('span', '公共引理册'), m('span.count-badge', store.lemmas.length)]),
+            store.lemmas.length === 0 && m('p.empty-copy', '把稿子里选中的步骤登记为引理，起个名字，其他稿子就能直接引用。'),
+            m('div.lemma-list', store.lemmas.map((lemma) => {
+              const status = lemmaStatus(lemma, store.documents);
+              const source = findLemmaSource(lemma, store.documents);
+              const statusText = status.state === 'revoked' ? '已撤销' : status.state === 'stale' ? (status.reason === 'missing' ? '已失效·步骤缺失' : '已失效·命题变样') : '有效';
+              return m('article.lemma-card', { 'data-lemma': lemma.id, class: `is-${status.state}` }, [
+                m('div.lemma-card-head', [
+                  m('input.lemma-name-input', {
+                    value: lemma.name,
+                    title: '点击可重命名引理',
+                    onchange: (event: Event) => store.renameLemma(lemma.id, (event.target as HTMLInputElement).value),
+                  }),
+                  m('span.lemma-status-tag', { class: `is-${status.state}` }, statusText),
+                ]),
+                m('div.lemma-statement', renderRichText(lemma.statement)),
+                m('div.lemma-source', source
+                  ? `来源：${source.document.title} · 步骤 ${source.index + 1}`
+                  : '来源：来源步骤已从稿子中移除'),
+                status.state === 'stale' && status.reason === 'changed' && source && m('div.lemma-drift', [
+                  m('span', '当前命题：'),
+                  m('span.lemma-drift-now', renderRichText(source.step.statement)),
+                ]),
+                m('details.lemma-basis', [
+                  m('summary', lemma.basisLemmaIds.length ? `依据 ${lemma.basisLemmaIds.length} 条引理` : '设置引理依据'),
+                  m('div.reference-list', store.lemmas.filter((other) => other.id !== lemma.id).map((other) => m('label.reference-item', [
+                    m('input', {
+                      type: 'checkbox',
+                      checked: lemma.basisLemmaIds.includes(other.id),
+                      onchange: () => store.toggleLemmaBasis(lemma.id, other.id),
+                    }),
+                    m('span.lemma-pick-name', other.name),
+                    m('small', other.revoked ? '已撤销' : other.statement.replace(/\$/g, '')),
+                  ]))),
+                ]),
+                m('div.lemma-actions', [
+                  status.state === 'stale' && status.reason === 'changed'
+                    && m('button.button.is-small.is-info.is-light', { onclick: () => { store.refreshLemma(lemma.id); m.redraw(); } }, '按当前稿刷新'),
+                  m('button.button.is-small.is-light', {
+                    class: lemma.revoked ? '' : 'is-danger',
+                    onclick: () => { store.setLemmaRevoked(lemma.id, !lemma.revoked); m.redraw(); },
+                  }, lemma.revoked ? '恢复使用' : '撤销引理'),
+                ]),
+              ]);
+            })),
+          ]),
           m('section.panel.symbol-panel', [
             m('div.panel-heading', [m('span', '符号表'), m('span.count-badge', Object.keys(document.symbols).length)]),
             m('div.symbol-list', Object.entries(document.symbols).map(([symbol, meaning]) => m('div.symbol-row', [
